@@ -1,31 +1,43 @@
-/* Ember Orbit — page chrome. The game itself is drawn on the canvas; this file only
-   centres it on a black page and keeps the status line out of sight. */
+/* Ember Orbit — page chrome around the canvas. The game itself draws everything;
+   this only centres the 1280x720 playfield on a dark page. */
+* {
+  box-sizing: border-box;
+}
+
 html,
 body {
   margin: 0;
-  height: 100%;
-  overflow: hidden;
-  background: #04050c;
+  padding: 0;
+  background: #04061a;
 }
 
 body {
+  min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
-#game {
+main {
+  text-align: center;
+  padding: 12px;
+}
+
+canvas {
   display: block;
-  touch-action: none;
+  max-width: min(1280px, 96vw);
+  max-height: calc(96vh - 48px);
+  width: auto;
+  height: auto;
+  border-radius: 10px;
+  box-shadow: 0 0 60px rgba(90, 110, 255, 0.25);
+  background: #070b1d;
   cursor: crosshair;
 }
 
-/* Read aloud, never shown: the status line screen readers announce. */
-#status {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
+.hint {
+  margin: 10px 0 0;
+  color: #9aa5d8;
+  font-size: 14px;
 }
