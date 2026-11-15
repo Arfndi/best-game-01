@@ -1,9 +1,6 @@
-// Ember Orbit — deterministic randomness.
-// Every random choice in the game (starfield, nebula blobs, particle spray) comes from a
-// seeded generator, so the same seed always paints the same sky. The flight simulation
-// itself uses no randomness at all: a launch is pure physics, replayable to the pixel.
-
-/** Mulberry32: a tiny, fast seeded PRNG with a full 32-bit period. */
+// Seeded randomness for Ember Orbit. Every random value in the game comes from a
+// mulberry32 stream seeded per level, so the same seed always draws the same sky
+// and the same frame — the game is fully deterministic for a given seed.
 export function mulberry32(seed) {
   let a = seed >>> 0;
   return function next() {
@@ -15,43 +12,35 @@ export function mulberry32(seed) {
   };
 }
 
-/** A small helper bundle around one seeded stream: ranges, picks and shuffles. */
-export function makeRng(seed) {
-  const next = mulberry32(seed);
-  return {
-    next,
-    /** Uniform float in [min, max). */
-    range(min, max) {
-      return min + (max - min) * next();
-    },
-    /** Uniform integer in [min, max] inclusive. */
-    int(min, max) {
-      return min + Math.floor(next() * (max - min + 1));
-    },
-    /** One element of an array, uniformly. */
-    pick(list) {
-      return list[Math.floor(next() * list.length)];
-    },
-    /** A new array with the elements in shuffled order (Fisher-Yates). */
-    shuffle(list) {
-      const out = list.slice();
-      for (let i = out.length - 1; i > 0; i -= 1) {
-        const j = Math.floor(next() * (i + 1));
-        const tmp = out[i];
-        out[i] = out[j];
-        out[j] = tmp;
-      }
-      return out;
-    },
-  };
+// Build a deterministic starfield: count stars with x, y, radius and brightness.
+export function makeStars(seed, count, width, height) {
+  const rand = mulberry32(seed);
+  const stars = [];
+  for (let i = 0; i < count; i += 1) {
+    stars.push({
+      x: rand() * width,
+      y: rand() * height,
+      r: 0.5 + rand() * 1.6,
+      tw: rand() * Math.PI * 2,
+      warm: rand() < 0.25,
+    });
+  }
+  return stars;
 }
 
-/** Hash a short string into a 32-bit seed, so level names can seed their own skies. */
-export function hashSeed(text) {
-  let h = 2166136261;
-  for (let i = 0; i < text.length; i += 1) {
-    h ^= text.charCodeAt(i);
-    h = Math.imul(h, 16777619);
+// A few soft nebula blobs, placed deterministically, for the backdrop.
+export function makeNebulae(seed, count, width, height) {
+  const rand = mulberry32(seed + 7919);
+  const hues = [265, 210, 320, 190, 280];
+  const blobs = [];
+  for (let i = 0; i < count; i += 1) {
+    blobs.push({
+      x: rand() * width,
+      y: rand() * height,
+      r: 160 + rand() * 260,
+      hue: hues[i % hues.length],
+      alpha: 0.05 + rand() * 0.06,
+    });
   }
-  return h >>> 0;
+  return blobs;
 }

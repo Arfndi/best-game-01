@@ -1,367 +1,305 @@
-// Ember Orbit — everything the player sees.
-// One canvas, drawn in layers: a pre-rendered deep-space backdrop (nebula clouds and a
-// twinkling starfield, painted once per level from a seeded RNG), then planets, shards,
-// the ember and its trail, then the HUD, then whichever screen is on top. All art is
-// code: gradients, arcs and glow — no image files ship with the game.
+// All drawing for Ember Orbit — canvas only, no images. The backdrop is a seeded
+// starfield with nebula blobs (same seed, same sky). Planets are radial-gradient
+// spheres with a lit edge and an optional ring; black holes are a dark disc with a
+// bright accretion ring; shards are spinning gold diamonds; the ember is a glowing
+// ball with a fading trail. The HUD and the title / level-end / game-over panels
+// are drawn on the same canvas so screenshots show the whole game.
+import { FIELD_WIDTH, FIELD_HEIGHT } from './levels.js';
+import { EMBER_R } from './physics.js';
+import { makeStars, makeNebulae } from './rng.js';
 
-import { FIELD_HEIGHT, FIELD_WIDTH, planetAt } from './levels.js';
-import { hashSeed, makeRng } from './rng.js';
+export const SCREEN_TITLE = 'title';
+export const SCREEN_PLAY = 'play';
+export const SCREEN_LEVEL = 'level';
+export const SCREEN_OVER = 'over';
+export const SCREEN_WIN = 'win';
 
-const TAU = Math.PI * 2;
+const GOLD = '#ffd76a';
+const EMBER_CORE = '#fff3c4';
+const EMBER_MID = '#ffb347';
+const EMBER_EDGE = '#ff5e3a';
 
-function hexToRgb(hex) {
-  const n = parseInt(hex.slice(1), 16);
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-}
-
-function rgba(hex, alpha) {
-  const [r, g, b] = hexToRgb(hex);
-  return `rgba(${r},${g},${b},${alpha})`;
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
 }
 
 export class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
-    this.backdrop = null;
     this.stars = [];
+    this.nebulae = [];
+    this.seed = 1;
   }
 
-  /** Paint the backdrop for a level: nebula wash + stars, from the level's seed. */
-  buildBackdrop(levelName, seed) {
-    const rng = makeRng(hashSeed(levelName) ^ (seed * 2654435761));
-    const off = document.createElement('canvas');
-    off.width = FIELD_WIDTH;
-    off.height = FIELD_HEIGHT;
-    const c = off.getContext('2d');
-    // Deep space base.
-    const base = c.createLinearGradient(0, 0, 0, FIELD_HEIGHT);
-    base.addColorStop(0, '#070a1c');
-    base.addColorStop(0.55, '#0d1030');
-    base.addColorStop(1, '#05060f');
-    c.fillStyle = base;
-    c.fillRect(0, 0, FIELD_WIDTH, FIELD_HEIGHT);
-    // Nebula clouds: big soft radial washes in teal, violet and ember orange.
-    const clouds = ['#123a5e', '#3d1e63', '#5e2a12', '#0f3d3a', '#2a1a55'];
-    for (let i = 0; i < 9; i += 1) {
-      const x = rng.range(0, FIELD_WIDTH);
-      const y = rng.range(0, FIELD_HEIGHT);
-      const r = rng.range(140, 320);
-      const g = c.createRadialGradient(x, y, 0, x, y, r);
-      g.addColorStop(0, rgba(rng.pick(clouds), 0.5));
-      g.addColorStop(1, 'rgba(0,0,0,0)');
-      c.fillStyle = g;
-      c.fillRect(x - r, y - r, r * 2, r * 2);
-    }
-    // Stars, recorded so they can twinkle later.
-    this.stars = [];
-    for (let i = 0; i < 210; i += 1) {
-      const star = {
-        x: rng.range(0, FIELD_WIDTH),
-        y: rng.range(0, FIELD_HEIGHT),
-        r: rng.range(0.5, 1.9),
-        phase: rng.range(0, TAU),
-        speed: rng.range(0.4, 1.6),
-        warm: rng.next() < 0.25,
-      };
-      this.stars.push(star);
-      c.fillStyle = star.warm ? '#ffd9a0' : '#dfe8ff';
-      c.globalAlpha = 0.9;
-      c.beginPath();
-      c.arc(star.x, star.y, star.r, 0, TAU);
-      c.fill();
-    }
-    c.globalAlpha = 1;
-    this.backdrop = off;
+  // (Re)build the backdrop for a level; seed = level index + 1 keeps skies distinct.
+  buildBackdrop(seed) {
+    this.seed = seed;
+    this.stars = makeStars(seed * 1013 + 7, 220, FIELD_WIDTH, FIELD_HEIGHT);
+    this.nebulae = makeNebulae(seed * 331 + 11, 4, FIELD_WIDTH, FIELD_HEIGHT);
   }
 
   drawBackdrop(time) {
-    const c = this.ctx;
-    c.drawImage(this.backdrop, 0, 0);
-    // Twinkle: a few stars breathe over the painted ones.
-    for (const star of this.stars) {
-      const a = 0.25 + 0.55 * (0.5 + 0.5 * Math.sin(time * star.speed + star.phase));
-      c.globalAlpha = a;
-      c.fillStyle = star.warm ? '#ffd9a0' : '#ffffff';
-      c.beginPath();
-      c.arc(star.x, star.y, star.r + 0.4, 0, TAU);
-      c.fill();
+    const ctx = this.ctx;
+    ctx.fillStyle = '#070b1d';
+    ctx.fillRect(0, 0, FIELD_WIDTH, FIELD_HEIGHT);
+    for (const n of this.nebulae) {
+      const g = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, n.r);
+      g.addColorStop(0, `hsla(${n.hue}, 70%, 45%, ${n.alpha})`);
+      g.addColorStop(1, 'hsla(0, 0%, 0%, 0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(n.x - n.r, n.y - n.r, n.r * 2, n.r * 2);
     }
-    c.globalAlpha = 1;
-  }
-
-  drawPlanet(planet, t, time) {
-    const c = this.ctx;
-    const p = planetAt(planet, t);
-    const glowR = planet.r * 2.6;
-    if (planet.blackHole) {
-      // Event horizon: a black disc, a violet accretion glow and a bent-light ring.
-      const glow = c.createRadialGradient(p.x, p.y, planet.r * 0.4, p.x, p.y, glowR);
-      glow.addColorStop(0, 'rgba(150,90,255,0.55)');
-      glow.addColorStop(0.5, 'rgba(90,40,180,0.18)');
-      glow.addColorStop(1, 'rgba(0,0,0,0)');
-      c.fillStyle = glow;
-      c.beginPath();
-      c.arc(p.x, p.y, glowR, 0, TAU);
-      c.fill();
-      c.fillStyle = '#000000';
-      c.beginPath();
-      c.arc(p.x, p.y, planet.r, 0, TAU);
-      c.fill();
-      c.strokeStyle = '#c9a6ff';
-      c.lineWidth = 2.5;
-      c.beginPath();
-      c.arc(p.x, p.y, planet.r + 3, 0, TAU);
-      c.stroke();
-      // Accretion ring, tilted and slowly spinning.
-      c.save();
-      c.translate(p.x, p.y);
-      c.rotate(-0.35 + Math.sin(time * 0.2) * 0.05);
-      c.strokeStyle = 'rgba(200,150,255,0.8)';
-      c.lineWidth = 3;
-      c.beginPath();
-      c.ellipse(0, 0, planet.r * 1.9, planet.r * 0.55, 0, 0, TAU);
-      c.stroke();
-      c.restore();
-      return;
-    }
-    const hue = planet.hue;
-    const glow = c.createRadialGradient(p.x, p.y, planet.r * 0.5, p.x, p.y, glowR);
-    glow.addColorStop(0, `hsla(${hue},80%,60%,0.5)`);
-    glow.addColorStop(1, 'rgba(0,0,0,0)');
-    c.fillStyle = glow;
-    c.beginPath();
-    c.arc(p.x, p.y, glowR, 0, TAU);
-    c.fill();
-    // Body: lit from the top-left, darker toward the rim.
-    const body = c.createRadialGradient(
-      p.x - planet.r * 0.35, p.y - planet.r * 0.35, planet.r * 0.1,
-      p.x, p.y, planet.r,
-    );
-    body.addColorStop(0, `hsl(${hue},75%,68%)`);
-    body.addColorStop(0.6, `hsl(${hue},65%,42%)`);
-    body.addColorStop(1, `hsl(${hue},70%,22%)`);
-    c.fillStyle = body;
-    c.beginPath();
-    c.arc(p.x, p.y, planet.r, 0, TAU);
-    c.fill();
-    // Craters: a few darker patches for texture.
-    c.fillStyle = `hsla(${hue},60%,30%,0.55)`;
-    const craters = [
-      [-0.3, -0.1, 0.22], [0.25, 0.3, 0.16], [0.1, -0.45, 0.12], [-0.45, 0.35, 0.14],
-    ];
-    for (const [ox, oy, or_] of craters) {
-      c.beginPath();
-      c.arc(p.x + ox * planet.r, p.y + oy * planet.r, or_ * planet.r, 0, TAU);
-      c.fill();
-    }
-    if (planet.ring) {
-      c.save();
-      c.translate(p.x, p.y);
-      c.rotate(-0.4);
-      c.strokeStyle = `hsla(${hue},70%,75%,0.85)`;
-      c.lineWidth = 4;
-      c.beginPath();
-      c.ellipse(0, 0, planet.r * 1.75, planet.r * 0.5, 0, 0, TAU);
-      c.stroke();
-      c.strokeStyle = `hsla(${hue},70%,75%,0.35)`;
-      c.lineWidth = 9;
-      c.beginPath();
-      c.ellipse(0, 0, planet.r * 2.0, planet.r * 0.62, 0, 0, TAU);
-      c.stroke();
-      c.restore();
+    for (const s of this.stars) {
+      const a = 0.35 + 0.45 * (0.5 + 0.5 * Math.sin(time * 1.4 + s.tw));
+      ctx.fillStyle = s.warm ? `rgba(255, 220, 160, ${a})` : `rgba(210, 225, 255, ${a})`;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctx.fill();
     }
   }
 
-  drawShard(shard, time, taken) {
-    if (taken) return;
-    const c = this.ctx;
-    const pulse = 1 + 0.12 * Math.sin(time * 3 + shard.x);
-    const r = 13 * pulse;
-    const glow = c.createRadialGradient(shard.x, shard.y, 0, shard.x, shard.y, r * 2.4);
-    glow.addColorStop(0, 'rgba(255,214,90,0.7)');
-    glow.addColorStop(1, 'rgba(255,214,90,0)');
-    c.fillStyle = glow;
-    c.beginPath();
-    c.arc(shard.x, shard.y, r * 2.4, 0, TAU);
-    c.fill();
-    // Four-point star.
-    c.save();
-    c.translate(shard.x, shard.y);
-    c.rotate(time * 0.6);
-    c.fillStyle = '#ffe27a';
-    c.beginPath();
-    c.moveTo(0, -r);
-    c.quadraticCurveTo(0, 0, r, 0);
-    c.quadraticCurveTo(0, 0, 0, r);
-    c.quadraticCurveTo(0, 0, -r, 0);
-    c.quadraticCurveTo(0, 0, 0, -r);
-    c.fill();
-    c.fillStyle = '#fff7d6';
-    c.beginPath();
-    c.arc(0, 0, r * 0.32, 0, TAU);
-    c.fill();
-    c.restore();
+  drawPlanet(p, time) {
+    const ctx = this.ctx;
+    const g = ctx.createRadialGradient(p.x - p.r * 0.35, p.y - p.r * 0.35, p.r * 0.1, p.x, p.y, p.r);
+    g.addColorStop(0, '#fff7e0');
+    g.addColorStop(0.35, p.color);
+    g.addColorStop(1, '#1a1030');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+    ctx.fill();
+    // Lit rim facing up-left, and a faint atmosphere.
+    ctx.strokeStyle = 'rgba(255, 240, 200, 0.35)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r - 1, Math.PI * 0.9, Math.PI * 1.7);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(160, 190, 255, 0.18)';
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r + 4, 0, Math.PI * 2);
+    ctx.stroke();
+    if (p.ring) {
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(-0.42);
+      ctx.strokeStyle = 'rgba(255, 220, 150, 0.5)';
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, p.r * 1.7, p.r * 0.42, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+    void time;
   }
 
-  drawEmber(x, y, trail, time) {
-    const c = this.ctx;
-    // Trail: fading orange ribbon behind the ember.
+  drawBlackHole(b, time) {
+    const ctx = this.ctx;
+    const spin = time * 0.9;
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(spin * 0.15);
+    const g = ctx.createRadialGradient(0, 0, b.r * 0.2, 0, 0, b.r * 2.6);
+    g.addColorStop(0, 'rgba(180, 120, 255, 0.5)');
+    g.addColorStop(0.5, 'rgba(120, 60, 220, 0.16)');
+    g.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(0, 0, b.r * 2.6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#e8c8ff';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, b.r * 1.9, b.r * 0.55, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(255, 180, 120, 0.8)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, b.r * 1.5, b.r * 0.45, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = '#000';
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(232, 200, 255, 0.9)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.r + 1, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  drawShard(s, time, collected) {
+    if (collected) return;
+    const ctx = this.ctx;
+    const spin = time * 1.6 + s.x * 0.01;
+    const pulse = 0.75 + 0.25 * Math.sin(time * 3 + s.y * 0.02);
+    ctx.save();
+    ctx.translate(s.x, s.y);
+    ctx.rotate(spin * 0.25);
+    const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, 26 * pulse);
+    glow.addColorStop(0, 'rgba(255, 215, 106, 0.55)');
+    glow.addColorStop(1, 'rgba(255, 215, 106, 0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(-26, -26, 52, 52);
+    ctx.fillStyle = GOLD;
+    ctx.beginPath();
+    ctx.moveTo(0, -11);
+    ctx.lineTo(8, 0);
+    ctx.lineTo(0, 11);
+    ctx.lineTo(-8, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#fff8dc';
+    ctx.beginPath();
+    ctx.moveTo(0, -11);
+    ctx.lineTo(4, 0);
+    ctx.lineTo(0, 4);
+    ctx.lineTo(-4, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  drawTrail(trail) {
+    const ctx = this.ctx;
+    if (trail.length < 2) return;
     for (let i = 1; i < trail.length; i += 1) {
       const a = i / trail.length;
-      const p0 = trail[i - 1];
-      const p1 = trail[i];
-      c.strokeStyle = `rgba(255,${140 + Math.floor(60 * a)},40,${0.15 + 0.55 * a})`;
-      c.lineWidth = 1 + 5 * a;
-      c.lineCap = 'round';
-      c.beginPath();
-      c.moveTo(p0.x, p0.y);
-      c.lineTo(p1.x, p1.y);
-      c.stroke();
+      ctx.strokeStyle = `rgba(255, ${140 + Math.floor(80 * a)}, 60, ${0.12 + 0.6 * a})`;
+      ctx.lineWidth = 1 + 3 * a;
+      ctx.beginPath();
+      ctx.moveTo(trail[i - 1].x, trail[i - 1].y);
+      ctx.lineTo(trail[i].x, trail[i].y);
+      ctx.stroke();
     }
-    const flicker = 1 + 0.08 * Math.sin(time * 11) + 0.05 * Math.sin(time * 23);
-    const glow = c.createRadialGradient(x, y, 0, x, y, 42 * flicker);
-    glow.addColorStop(0, 'rgba(255,220,130,0.95)');
-    glow.addColorStop(0.35, 'rgba(255,150,50,0.55)');
-    glow.addColorStop(1, 'rgba(255,120,30,0)');
-    c.fillStyle = glow;
-    c.beginPath();
-    c.arc(x, y, 42 * flicker, 0, TAU);
-    c.fill();
-    c.fillStyle = '#fff3c4';
-    c.beginPath();
-    c.arc(x, y, 9 * flicker, 0, TAU);
-    c.fill();
-    c.fillStyle = '#ff9a2a';
-    c.beginPath();
-    c.arc(x, y, 5.5 * flicker, 0, TAU);
-    c.fill();
   }
 
-  drawAim(start, aimAngle, aimSpeed, preview) {
-    const c = this.ctx;
-    // Dotted predicted arc.
-    c.fillStyle = 'rgba(255,220,140,0.9)';
-    for (let i = 0; i < preview.length; i += 1) {
-      const p = preview[i];
-      c.beginPath();
-      c.arc(p.x, p.y, i % 2 === 0 ? 3 : 2, 0, TAU);
-      c.fill();
-    }
-    // Power ring around the ember: fuller means a faster launch.
-    const power = (aimSpeed - 140) / (560 - 140);
-    c.strokeStyle = 'rgba(255,220,140,0.9)';
-    c.lineWidth = 4;
-    c.beginPath();
-    c.arc(start.x, start.y, 26, -Math.PI / 2, -Math.PI / 2 + TAU * power);
-    c.stroke();
-    c.strokeStyle = 'rgba(255,255,255,0.25)';
-    c.lineWidth = 2;
-    c.beginPath();
-    c.arc(start.x, start.y, 26, -Math.PI / 2 + TAU * power, -Math.PI / 2 + TAU);
-    c.stroke();
+  drawEmber(x, y, time) {
+    const ctx = this.ctx;
+    const flicker = 1 + 0.08 * Math.sin(time * 9);
+    const g = ctx.createRadialGradient(x, y, 0, x, y, EMBER_R * 3.2 * flicker);
+    g.addColorStop(0, EMBER_CORE);
+    g.addColorStop(0.35, EMBER_MID);
+    g.addColorStop(0.65, EMBER_EDGE);
+    g.addColorStop(1, 'rgba(255, 94, 58, 0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(x, y, EMBER_R * 3.2 * flicker, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = EMBER_CORE;
+    ctx.beginPath();
+    ctx.arc(x, y, EMBER_R * 0.75, 0, Math.PI * 2);
+    ctx.fill();
   }
 
-  drawHud(state) {
-    const c = this.ctx;
-    const level = state.level;
-    c.textBaseline = 'alphabetic';
-    // Top-left: level name and number.
-    c.fillStyle = 'rgba(255,255,255,0.92)';
-    c.font = '700 22px system-ui, sans-serif';
-    c.textAlign = 'left';
-    c.fillText(`LEVEL ${state.levelIndex + 1} · ${level.name.toUpperCase()}`, 24, 38);
-    c.fillStyle = 'rgba(255,255,255,0.55)';
-    c.font = '15px system-ui, sans-serif';
-    c.fillText(level.hint, 24, 62);
-    // Top-right: score and best.
-    c.textAlign = 'right';
-    c.fillStyle = '#ffe27a';
-    c.font = '700 26px system-ui, sans-serif';
-    c.fillText(`SCORE ${state.score}`, FIELD_WIDTH - 24, 38);
-    c.fillStyle = 'rgba(255,255,255,0.55)';
-    c.font = '15px system-ui, sans-serif';
-    c.fillText(`BEST ${state.best}`, FIELD_WIDTH - 24, 62);
-    // Bottom-left: launches left as little embers.
-    for (let i = 0; i < level.launches; i += 1) {
-      const x = 34 + i * 30;
-      const y = FIELD_HEIGHT - 30;
-      const lit = i < state.launchesLeft;
-      c.globalAlpha = lit ? 1 : 0.22;
-      const g = c.createRadialGradient(x, y, 0, x, y, 12);
-      g.addColorStop(0, '#fff3c4');
-      g.addColorStop(0.5, '#ff9a2a');
-      g.addColorStop(1, 'rgba(255,120,30,0)');
-      c.fillStyle = g;
-      c.beginPath();
-      c.arc(x, y, 12, 0, TAU);
-      c.fill();
+  drawPreview(points) {
+    const ctx = this.ctx;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+    for (let i = 0; i < points.length; i += 1) {
+      const p = points[i];
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, i % 6 === 0 ? 3 : 2, 0, Math.PI * 2);
+      ctx.fill();
     }
-    c.globalAlpha = 1;
-    c.fillStyle = 'rgba(255,255,255,0.75)';
-    c.font = '15px system-ui, sans-serif';
-    c.textAlign = 'left';
-    c.fillText('LAUNCHES', 34, FIELD_HEIGHT - 48);
-    // Bottom-right: shards collected.
-    c.textAlign = 'right';
-    c.fillStyle = '#ffe27a';
-    c.font = '700 20px system-ui, sans-serif';
-    c.fillText(`◆ ${state.collected.size} / ${level.shards.length}`, FIELD_WIDTH - 24, FIELD_HEIGHT - 30);
-    // Combo flash.
-    if (state.combo > 1 && state.comboTimer > 0) {
-      c.textAlign = 'center';
-      c.fillStyle = `rgba(255,214,90,${Math.min(1, state.comboTimer)})`;
-      c.font = '700 30px system-ui, sans-serif';
-      c.fillText(`COMBO x${state.combo}`, FIELD_WIDTH / 2, 110);
+  }
+
+  drawAimArrow(from, to) {
+    const ctx = this.ctx;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 6]);
+    ctx.beginPath();
+    ctx.moveTo(from.x, from.y);
+    ctx.lineTo(to.x, to.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  drawHud(game) {
+    const ctx = this.ctx;
+    const level = game.level;
+    ctx.fillStyle = 'rgba(5, 8, 24, 0.62)';
+    roundRect(ctx, 12, 12, FIELD_WIDTH - 24, 54, 12);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 24px system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`LEVEL ${game.levelIndex + 1}/10  ·  ${level.name}`, 28, 40);
+    ctx.textAlign = 'right';
+    ctx.font = '20px system-ui, sans-serif';
+    ctx.fillStyle = GOLD;
+    ctx.fillText(`★ ${game.score}`, 700, 40);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(`Launches ${game.launchesLeft}`, 880, 40);
+    ctx.fillText(`Shards ${game.collectedCount}/${level.shards.length}`, 1080, 40);
+    if (game.combo > 1) {
+      ctx.fillStyle = '#ffb347';
+      ctx.font = 'bold 22px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(`COMBO x${game.combo}`, FIELD_WIDTH / 2, 84);
     }
+    ctx.textAlign = 'left';
   }
 
   drawPanel(title, lines, accent) {
-    const c = this.ctx;
+    const ctx = this.ctx;
+    ctx.fillStyle = 'rgba(4, 6, 18, 0.55)';
+    ctx.fillRect(0, 0, FIELD_WIDTH, FIELD_HEIGHT);
     const w = 620;
-    const h = 150 + lines.length * 34;
+    const h = 150 + lines.length * 38;
     const x = (FIELD_WIDTH - w) / 2;
     const y = (FIELD_HEIGHT - h) / 2;
-    c.fillStyle = 'rgba(4,6,18,0.72)';
-    c.fillRect(0, 0, FIELD_WIDTH, FIELD_HEIGHT);
-    c.fillStyle = 'rgba(10,14,34,0.95)';
-    c.strokeStyle = accent;
-    c.lineWidth = 2;
-    c.beginPath();
-    c.roundRect(x, y, w, h, 18);
-    c.fill();
-    c.stroke();
-    c.textAlign = 'center';
-    c.fillStyle = accent;
-    c.font = '700 44px system-ui, sans-serif';
-    c.fillText(title, FIELD_WIDTH / 2, y + 72);
-    c.fillStyle = 'rgba(255,255,255,0.88)';
-    c.font = '19px system-ui, sans-serif';
-    lines.forEach((line, i) => {
-      c.fillText(line, FIELD_WIDTH / 2, y + 118 + i * 34);
-    });
+    ctx.fillStyle = 'rgba(10, 14, 36, 0.94)';
+    roundRect(ctx, x, y, w, h, 18);
+    ctx.fill();
+    ctx.strokeStyle = accent || GOLD;
+    ctx.lineWidth = 2;
+    roundRect(ctx, x, y, w, h, 18);
+    ctx.stroke();
+    ctx.fillStyle = accent || GOLD;
+    ctx.font = 'bold 40px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(title, FIELD_WIDTH / 2, y + 52);
+    ctx.fillStyle = '#e8ecff';
+    ctx.font = '21px system-ui, sans-serif';
+    for (let i = 0; i < lines.length; i += 1) {
+      ctx.fillText(lines[i], FIELD_WIDTH / 2, y + 108 + i * 38);
+    }
+    ctx.textAlign = 'left';
   }
 
-  drawTitle(best) {
-    const c = this.ctx;
-    c.textAlign = 'center';
-    c.fillStyle = '#ffd27a';
-    c.font = '700 84px system-ui, sans-serif';
-    c.fillText('EMBER ORBIT', FIELD_WIDTH / 2, 250);
-    c.fillStyle = 'rgba(255,255,255,0.9)';
-    c.font = '24px system-ui, sans-serif';
-    c.fillText('Slingshot the last ember through ten dying star systems.', FIELD_WIDTH / 2, 300);
-    c.fillText('Collect every star shard. Mind the gravity — and the dark.', FIELD_WIDTH / 2, 334);
-    c.fillStyle = '#ffe27a';
-    c.font = '700 26px system-ui, sans-serif';
-    c.fillText('DRAG BACK TO AIM · RELEASE TO LAUNCH · R TO RESTART', FIELD_WIDTH / 2, 420);
-    c.fillStyle = 'rgba(255,255,255,0.75)';
-    c.font = '20px system-ui, sans-serif';
-    c.fillText('CLICK ANYWHERE TO BEGIN', FIELD_WIDTH / 2, 470);
-    if (best > 0) {
-      c.fillStyle = 'rgba(255,255,255,0.6)';
-      c.font = '18px system-ui, sans-serif';
-      c.fillText(`BEST SCORE ${best}`, FIELD_WIDTH / 2, 510);
-    }
+  drawTitle(game) {
+    const ctx = this.ctx;
+    ctx.fillStyle = 'rgba(4, 6, 18, 0.45)';
+    ctx.fillRect(0, 0, FIELD_WIDTH, FIELD_HEIGHT);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = GOLD;
+    ctx.font = 'bold 84px system-ui, sans-serif';
+    ctx.fillText('EMBER ORBIT', FIELD_WIDTH / 2, 210);
+    ctx.fillStyle = '#fff';
+    ctx.font = '26px system-ui, sans-serif';
+    ctx.fillText('The last ember of a dying star. Slingshot it home.', FIELD_WIDTH / 2, 262);
+    ctx.fillStyle = '#c9d2ff';
+    ctx.font = '21px system-ui, sans-serif';
+    ctx.fillText('Drag back from the ember to aim — release to launch.', FIELD_WIDTH / 2, 330);
+    ctx.fillText('Collect every star shard. Mind the black holes.', FIELD_WIDTH / 2, 362);
+    ctx.fillText('Click mid-flight to bank your shards early.  R restarts · M mutes.', FIELD_WIDTH / 2, 394);
+    ctx.fillStyle = GOLD;
+    ctx.font = 'bold 26px system-ui, sans-serif';
+    ctx.fillText('Press ENTER or click to play', FIELD_WIDTH / 2, 470);
+    ctx.fillStyle = '#9aa5d8';
+    ctx.font = '19px system-ui, sans-serif';
+    ctx.fillText(`Best score: ${game.best}`, FIELD_WIDTH / 2, 520);
+    ctx.textAlign = 'left';
   }
 }

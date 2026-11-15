@@ -1,72 +1,105 @@
-// Ember Orbit — deterministic screenshot scenes behind ?shot=start|play|end.
-// Each scene plays the real game forward from a fresh level for a fixed amount of
-// time, steered by the autopilot (physics.findLaunch), so the frame is what a short
-// game really looks like — and the same seed always gives the same frame. The play
-// scene's pilot takes the best launch it can find; the end scene's pilot plays the
-// whole level to its conclusion, so it lands on the level-complete screen when the
-// level is winnable and on the game-over screen when it is not.
+// The screenshot scenes behind ?shot=start|play|end. Each one plays the real rules
+// forward from a fresh level, steered by the same grid-search autopilot the
+// winnability test uses, so every frame is what a real game looks like and the
+// same seed always gives the same frame. The play scene freezes a long, safe
+// flight mid-arc (never a crash frame); the end scene plays a whole level the
+// autopilot finishes inside par, so the panel shows three stars.
+import { SCREEN_TITLE, SCREEN_PLAY, SCREEN_LEVEL } from './render.js';
+import { simulateLaunch, findBestLaunch, autopilotLevel, MAX_LAUNCH_SPEED } from './physics.js';
 
-import { SCREEN_COMPLETE, SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE } from './game.js';
-import { findLaunch } from './physics.js';
+const START_SECONDS = 4;
+const PLAY_FREEZE = 4;
+const END_LEVEL_INDEX = 4;
 
-/** Advance a game through one flight without rendering, applying its outcome. */
-function playFlight(game, launch) {
-  game.launch(launch.angle, launch.speed);
-  const flight = game.flight;
-  if (!flight) return;
-  // Step the whole flight at the fixed step until it resolves.
-  let guard = 0;
-  while (game.flight && guard < 20000) {
-    game.update(1 / 60);
-    guard += 1;
+// Score from a list of per-launch shard hauls, with the combo rule the game uses:
+// the k-th shard of one flight is worth 100 * k.
+function scoreFromHauls(launches, launchesLeft) {
+  let score = 0;
+  for (const l of launches) {
+    for (let k = 1; k <= l.got.length; k += 1) score += 100 * k;
   }
+  return score + 250 * launchesLeft;
 }
 
-/**
- * Set `game` to the named scene (start, play or end; any other name is start) and
- * return the screen the renderer should draw over it.
- */
+// The nicest mid-flight frame: a launch that collects at least one shard, stays
+// airborne for a while, and ends by drifting out (not by crashing into a planet).
+function findShowcaseLaunch(level) {
+  let best = null;
+  for (let aDeg = 0; aDeg < 360; aDeg += 6) {
+    const a = (aDeg * Math.PI) / 180;
+    for (let sp = 140; sp <= MAX_LAUNCH_SPEED; sp += 30) {
+      const r = simulateLaunch(level, a, sp, new Set());
+      if (r.got.length < 1 || r.end === 'crash' || r.end === 'swallow') continue;
+      if (r.time < 5) continue;
+      if (best === null || r.time > best.time) best = { angle: a, speed: sp, result: r };
+    }
+  }
+  return best;
+}
+
+// Set `game` to the named scene (start, play or end; any other name is start) and
+// return the screen to draw over it.
 export function stageShot(name, game) {
-  game.loadLevel(0);
-  game.score = 0;
+  const level = game.level;
+  game.loadLevel(game.levelIndex, true);
   if (name !== 'play' && name !== 'end') {
-    // Title screen over a level that has been breathing for a few seconds: the
-    // starfield twinkles and the drifting world (level 6+) has moved on.
-    for (let i = 0; i < 5 * 60; i += 1) game.update(1 / 60);
+    // Title: let the ember glow on its pad for a few seconds of starfield shimmer.
+    game.time = START_SECONDS;
     game.screen = SCREEN_TITLE;
-    return SCREEN_TITLE;
+    return { screen: SCREEN_TITLE };
   }
   if (name === 'play') {
-    const launch = findLaunch(game.level, game.collected);
-    if (launch) {
-      game.launch(launch.angle, launch.speed);
-      // Fly part-way into the flight — about halfway, or just under three seconds —
-      // so the frame catches the ember mid-arc with its trail behind it, before the
-      // flight resolves and the ember resets to the launch pad.
-      const target = Math.min(2.8, launch.flight.endAt * 0.45);
-      const steps = Math.floor(target * 60);
-      for (let i = 0; i < steps; i += 1) {
-        if (!game.flight) break;
-        game.update(1 / 60);
-      }
+    const show = findShowcaseLaunch(level);
+    const pick = show !== null ? show : null;
+    let flight = null;
+    if (pick !== null) {
+      flight = simulateLaunch(level, pick.angle, pick.speed, new Set(), PLAY_FREEZE);
+    } else {
+      const best = findBestLaunch(level, new Set(), true);
+      flight = simulateLaunch(level, best.angle, best.speed, new Set(), PLAY_FREEZE);
     }
-    game.messageTimer = 0;
+    game.flight = {
+      x: flight.endX,
+      y: flight.endY,
+      vx: 0,
+      vy: 0,
+      time: flight.time,
+      slow: 0,
+      trail: flight.trail,
+      trailAt: flight.time,
+      got: flight.got,
+    };
+    // Bank what the frozen flight collected, so the HUD shows real progress.
+    for (const i of flight.got) game.collected.add(i);
+    game.combo = flight.got.length;
+    game.score = flight.got.reduce((sum, _, k) => sum + 100 * (k + 1), 0);
+    game.launchesLeft = level.launches - 1;
+    game.launchesUsed = 1;
+    game.time = PLAY_FREEZE;
     game.screen = SCREEN_PLAY;
-    return SCREEN_PLAY;
+    return { screen: SCREEN_PLAY };
   }
-  // End scene: play the level to its conclusion with the autopilot at the helm.
-  let rounds = 0;
-  while (game.screen === SCREEN_PLAY && rounds < 12) {
-    const launch = findLaunch(game.level, game.collected);
-    if (!launch) break;
-    playFlight(game, launch);
-    rounds += 1;
+  // End: play a whole level the autopilot finishes inside par (Slalom), so the
+  // panel shows the three-star finish with a launch bonus.
+  game.loadLevel(END_LEVEL_INDEX, true);
+  const endLevel = game.level;
+  const report = autopilotLevel(endLevel, true);
+  if (report.complete) {
+    game.launchesLeft = endLevel.launches - report.launchesUsed;
+    game.launchesUsed = report.launchesUsed;
+    game.collected = new Set(endLevel.shards.map((_, i) => i));
+    game.score = scoreFromHauls(report.launches, game.launchesLeft);
+    game.starsEarned = game.launchesUsed <= endLevel.par ? 3 : game.launchesUsed <= endLevel.par + 1 ? 2 : 1;
+    const stars = '★'.repeat(game.starsEarned) + '☆'.repeat(3 - game.starsEarned);
+    game.endLines = [
+      `${stars}   ${endLevel.name} lit!`,
+      `Launch bonus +${250 * game.launchesLeft}  ·  Score ${game.score}`,
+      'Click or press Enter for the next system.',
+    ];
+    game.screen = SCREEN_LEVEL;
+    game.time = 12;
+    return { screen: SCREEN_LEVEL };
   }
-  // Clear transient banners so the result panel is the shot's clean subject.
-  game.messageTimer = 0;
-  game.comboTimer = 0;
-  if (game.screen === SCREEN_COMPLETE) return SCREEN_COMPLETE;
-  if (game.screen === SCREEN_OVER) return SCREEN_OVER;
-  game.screen = SCREEN_OVER;
-  return SCREEN_OVER;
+  game.screen = SCREEN_PLAY;
+  return { screen: SCREEN_PLAY };
 }

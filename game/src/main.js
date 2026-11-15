@@ -3,7 +3,6 @@
 // keyboard input, and runs the frame loop. A `?shot=start|play|end&seed=N` query
 // switches to screenshot mode: the game stages that scene deterministically and draws
 // it, so a headless browser captures exactly the frame the maker intended.
-
 import { FIELD_HEIGHT, FIELD_WIDTH } from './levels.js';
 import { Game } from './game.js';
 import { stageShot } from './shots.js';
@@ -28,6 +27,7 @@ window.addEventListener('resize', fitCanvas);
 canvas.addEventListener('pointerdown', (event) => game.onPointerDown(event));
 window.addEventListener('pointermove', (event) => game.onPointerMove(event));
 window.addEventListener('pointerup', () => game.onPointerUp());
+canvas.addEventListener('click', (event) => game.onPointerClick(event));
 window.addEventListener('keydown', (event) => game.onKey(event));
 // Keep the page from scrolling while the player drags on touch screens.
 canvas.addEventListener('touchmove', (event) => event.preventDefault(), { passive: false });
@@ -39,7 +39,6 @@ if (shot) {
   // viewport than their window, and a fitted canvas would leave black bars in the shot.
   canvas.style.width = '1280px';
   canvas.style.height = '720px';
-  game.renderer.buildBackdrop(game.level.name, seed);
   stageShot(shot, game);
   game.draw();
   const frozen = () => {
