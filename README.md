@@ -6,8 +6,8 @@ You are the last ember of a dying star. Slingshot yourself around gravity planet
 and black holes to collect every star shard in ten handcrafted star systems. Drag
 back from the ember to aim — the dotted arc previews your flight — release to
 launch, and chain shards into combos. You have a limited number of launches per
-system; crash into a planet, drift off into deep space, or run out of launches and
-the ember fades.
+system; crash into a planet, get swallowed by a black hole, drift off into deep
+space, or run out of launches and the ember fades.
 
 ## How to play
 
@@ -35,7 +35,7 @@ The three screenshots in `screenshots/` are real renders of the game's own code,
 taken in a headless browser with `?shot=start|play|end&seed=1`:
 
 1. `1-start.jpg` — the title screen.
-2. `2-play.jpg` — mid-flight, six seconds into an autopilot launch.
+2. `2-play.jpg` — mid-flight, seven seconds into an autopilot launch.
 3. `3-end.jpg` — the level-complete screen after the autopilot lights the system.
 
 ## Layout
@@ -48,11 +48,7 @@ taken in a headless browser with `?shot=start|play|end&seed=1`:
 - `game/src/levels.js` — the ten star systems.
 - `game/src/physics.js` — gravity flight simulation and the autopilot.
 - `game/src/audio.js` — synthesized WebAudio sound effects.
-- `game/src/render.js` — all canvas drawing: backdrop, planets, shards, HUD, screens.
-- `game/src/game.js` — state machine, input, scoring.
-- `game/src/shots.js` — the deterministic screenshot scenes.
+- `game/src/render.js` — canvas drawing: planets, black holes, HUD, panels.
+- `game/src/game.js` — state machine, input, scoring, combos.
+- `game/src/shots.js` — deterministic screenshot staging.
 - `game/src/main.js` — bootstrap and frame loop.
-
-## License
-
-MIT — see `LICENSE`.
